@@ -472,7 +472,7 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         elif config.peft_type == PeftType.P_TUNING:
             prompt_encoder = PromptEncoder(config)
         elif config.peft_type == PeftType.PREFIX_TUNING:
-            prompt_encoder = PrefixEncoder(config, self.base_model_config)
+            prompt_encoder = PrefixEncoder(config, self.base_model.config)
         else:
             raise ValueError("Not supported")
 
