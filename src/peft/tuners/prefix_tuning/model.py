@@ -53,23 +53,44 @@ class PrefixEncoder(torch.nn.Module):
     Output shape: (`batch_size`, `num_virtual_tokens`, `2*layers*hidden`)
     """
 
-    def __init__(self, config):
+    def __init__(self, config, base_model_config=None):
         super().__init__()
         self.prefix_projection = config.prefix_projection
         token_dim = config.token_dim
         num_layers = config.num_layers
         encoder_hidden_size = config.encoder_hidden_size
         num_virtual_tokens = config.num_virtual_tokens
+
+        if base_model_config is not None:
+            if hasattr(base_model_config, "num_key_value_heads"):
+                num_key_value_heads = base_model_config.num_key_value_heads
+            else:
+                num_key_value_heads = None
+
+            num_attn_heads = base_model_config.num_attention_heads
+
         if self.prefix_projection and not config.inference_mode:
             # Use a two-layer MLP to encode the prefix
-            self.embedding = torch.nn.Embedding(num_virtual_tokens, token_dim)
-            self.transform = torch.nn.Sequential(
-                torch.nn.Linear(token_dim, encoder_hidden_size),
-                torch.nn.Tanh(),
-                torch.nn.Linear(encoder_hidden_size, num_layers * 2 * token_dim),
-            )
+            if (num_key_value_heads is not None) and (num_key_value_heads != num_attn_heads):
+                self.embedding = torch.nn.Embedding(num_virtual_tokens, token_dim)
+                self.transform = torch.nn.Sequential(
+                    torch.nn.Linear(token_dim, encoder_hidden_size),
+                    torch.nn.Tanh(),
+                    torch.nn.Linear(encoder_hidden_size, num_layers * 2 * num_key_value_heads * (token_dim // num_attn_heads)),
+                )
+            else:
+                # Use a two-layer MLP to encode the prefix
+                self.embedding = torch.nn.Embedding(num_virtual_tokens, token_dim)
+                self.transform = torch.nn.Sequential(
+                    torch.nn.Linear(token_dim, encoder_hidden_size),
+                    torch.nn.Tanh(),
+                    torch.nn.Linear(encoder_hidden_size, num_layers * 2 * token_dim),
+                )
         else:
-            self.embedding = torch.nn.Embedding(num_virtual_tokens, num_layers * 2 * token_dim)
+            if (num_key_value_heads is not None) and (num_key_value_heads != num_attn_heads):
+                self.embedding = torch.nn.Embedding(num_virtual_tokens, num_layers * 2 * num_key_value_heads * (token_dim // num_attn_heads))
+            else:
+                self.embedding = torch.nn.Embedding(num_virtual_tokens, num_layers * 2 * token_dim)
 
     def forward(self, prefix: torch.Tensor):
         if self.prefix_projection:
