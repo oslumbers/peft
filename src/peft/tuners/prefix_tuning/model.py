@@ -69,12 +69,11 @@ class PrefixEncoder(torch.nn.Module):
 
             num_attn_heads = base_model_config.num_attention_heads
 
-        print('HELLLOOOOOO')
-
         if self.prefix_projection and not config.inference_mode:
             # Use a two-layer MLP to encode the prefix
             if (num_key_value_heads is not None) and (num_key_value_heads != num_attn_heads):
                 self.embedding = torch.nn.Embedding(num_virtual_tokens, token_dim)
+
                 self.transform = torch.nn.Sequential(
                     torch.nn.Linear(token_dim, encoder_hidden_size),
                     torch.nn.Tanh(),

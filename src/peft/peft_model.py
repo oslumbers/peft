@@ -541,6 +541,8 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
             if self.base_model_torch_dtype is not None:
                 past_key_values = past_key_values.to(self.base_model_torch_dtype)
 
+            #print(past_key_values.shape)
+
             if hasattr(self.base_model.config, "num_key_value_heads"):
                 past_key_values = past_key_values.view(
                     batch_size,
@@ -550,6 +552,7 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                     peft_config.token_dim // peft_config.num_attention_heads,
                 )
             else:
+                
                 past_key_values = past_key_values.view(
                     batch_size,
                     peft_config.num_virtual_tokens,
@@ -557,6 +560,8 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                     peft_config.num_attention_heads,
                     peft_config.token_dim // peft_config.num_attention_heads,
                 )
+
+            #print(past_key_values.shape)
                 
             if peft_config.num_transformer_submodules == 2:
                 past_key_values = torch.cat([past_key_values, past_key_values], dim=2)
