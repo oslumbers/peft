@@ -65,6 +65,8 @@ from .tuners import (
     BOFTModel,
     PrefixEncoder,
     PrefixTuningConfig,
+    PrefixColabEncoder,
+    PrefixColabTuningConfig,
     PromptEmbedding,
     PromptEncoder,
     PromptEncoderConfig,
@@ -84,6 +86,7 @@ from .tuners import (
 )
 from .utils import (
     TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING,
+    TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING,
     PeftType,
     TaskType,
     bloom_model_postprocess_past_key_value,

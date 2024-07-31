@@ -39,6 +39,7 @@ from .constants import (
     TRANSFORMERS_MODELS_TO_LNTUNING_TARGET_MODULES_MAPPING,
     TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING,
     TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING,
+    TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING,
     TRANSFORMERS_MODELS_TO_VERA_TARGET_MODULES_MAPPING,
     WEIGHTS_NAME,
     bloom_model_postprocess_past_key_value,
@@ -62,6 +63,7 @@ __all__ = [
     "TRANSFORMERS_MODELS_TO_IA3_TARGET_MODULES_MAPPING",
     "TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING",
     "TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING",
+    "TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING",
     "TRANSFORMERS_MODELS_TO_LNTUNING_TARGET_MODULES_MAPPING",
     "TRANSFORMERS_MODELS_TO_VERA_TARGET_MODULES_MAPPING",
     "WEIGHTS_NAME",
@@ -413,7 +415,7 @@ def fsdp_auto_wrap_policy(model):
         from accelerate.utils.dataclasses import get_module_class_from_name
     from torch.distributed.fsdp.wrap import _or_policy, lambda_auto_wrap_policy, transformer_auto_wrap_policy
 
-    from ..tuners import PrefixEncoder, PromptEmbedding, PromptEncoder
+    from ..tuners import PrefixEncoder, PrefixColabEncoder, PromptEmbedding, PromptEncoder
 
     default_transformer_cls_names_to_wrap = (
         ",".join(model._no_split_modules) if getattr(model, "_no_split_modules", None) is not None else ""
@@ -421,7 +423,7 @@ def fsdp_auto_wrap_policy(model):
     transformer_cls_names_to_wrap = os.environ.get(
         "FSDP_TRANSFORMER_CLS_TO_WRAP", default_transformer_cls_names_to_wrap
     ).split(",")
-    transformer_cls_to_wrap = {PrefixEncoder, PromptEncoder, PromptEmbedding}
+    transformer_cls_to_wrap = {PrefixEncoder, PrefixColabEncoder, PromptEncoder, PromptEmbedding}
     for layer_class in transformer_cls_names_to_wrap:
         transformer_cls = get_module_class_from_name(model, layer_class)
         if transformer_cls is None:

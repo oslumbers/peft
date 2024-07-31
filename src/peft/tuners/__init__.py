@@ -26,6 +26,7 @@ from .adalora import AdaLoraConfig, AdaLoraModel
 from .boft import BOFTConfig, BOFTModel
 from .p_tuning import PromptEncoder, PromptEncoderConfig, PromptEncoderReparameterizationType
 from .prefix_tuning import PrefixEncoder, PrefixTuningConfig
+from .prefix_tuning_colab import PrefixColabEncoder, PrefixColabTuningConfig
 from .prompt_tuning import PromptEmbedding, PromptTuningConfig, PromptTuningInit
 from .multitask_prompt_tuning import MultitaskPromptEmbedding, MultitaskPromptTuningConfig, MultitaskPromptTuningInit
 from .oft import OFTConfig, OFTModel

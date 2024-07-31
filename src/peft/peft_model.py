@@ -52,6 +52,7 @@ from .tuners import (
     OFTModel,
     PolyModel,
     PrefixEncoder,
+    PrefixColabEncoder,
     PromptEmbedding,
     PromptEncoder,
     VeraModel,
@@ -60,6 +61,7 @@ from .tuners.tuners_utils import BaseTuner, BaseTunerLayer
 from .utils import (
     SAFETENSORS_WEIGHTS_NAME,
     TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING,
+    TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING,
     WEIGHTS_NAME,
     PeftType,
     TaskType,
@@ -83,6 +85,7 @@ PEFT_TYPE_TO_MODEL_MAPPING = {
     PeftType.PROMPT_TUNING: PromptEmbedding,
     PeftType.P_TUNING: PromptEncoder,
     PeftType.PREFIX_TUNING: PrefixEncoder,
+    PeftType.PREFIX_COLAB_TUNING: PrefixColabEncoder,
     PeftType.ADALORA: AdaLoraModel,
     PeftType.BOFT: BOFTModel,
     PeftType.ADAPTION_PROMPT: AdaptionPromptModel,
@@ -473,6 +476,8 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
             prompt_encoder = PromptEncoder(config)
         elif config.peft_type == PeftType.PREFIX_TUNING:
             prompt_encoder = PrefixEncoder(config, self.base_model.config)
+        elif config.peft_type == PeftType.PREFIX_COLAB_TUNING:
+            prompt_encoder = PrefixColabEncoder(config, self.base_model.config)
         else:
             raise ValueError("Not supported")
 
@@ -513,6 +518,9 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         if self.peft_config[adapter_name].peft_type == PeftType.PREFIX_TUNING:
             prompt_tokens = prompt_tokens[:, : self.peft_config[adapter_name].num_virtual_tokens]
 
+        if self.peft_config[adapter_name].peft_type == PeftType.PREFIX_COLAB_TUNING:
+            prompt_tokens = prompt_tokens[:, : self.peft_config[adapter_name].num_virtual_tokens]
+
         if self.peft_config[adapter_name].peft_type == PeftType.MULTITASK_PROMPT_TUNING:
             prompt_embeddings = super(MultitaskPromptEmbedding, prompt_encoder).forward(prompt_tokens)
         else:
@@ -541,7 +549,42 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
             if self.base_model_torch_dtype is not None:
                 past_key_values = past_key_values.to(self.base_model_torch_dtype)
 
-            #print(past_key_values.shape)
+            if hasattr(self.base_model.config, "num_key_value_heads"):
+                past_key_values = past_key_values.view(
+                    batch_size,
+                    peft_config.num_virtual_tokens,
+                    peft_config.num_layers * 2,
+                    self.base_model.config.num_key_value_heads,
+                    peft_config.token_dim // peft_config.num_attention_heads,
+                )
+            else:
+                
+                past_key_values = past_key_values.view(
+                    batch_size,
+                    peft_config.num_virtual_tokens,
+                    peft_config.num_layers * 2,
+                    peft_config.num_attention_heads,
+                    peft_config.token_dim // peft_config.num_attention_heads,
+                )
+                
+            if peft_config.num_transformer_submodules == 2:
+                past_key_values = torch.cat([past_key_values, past_key_values], dim=2)
+            past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(
+                peft_config.num_transformer_submodules * 2
+            )
+            if TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING.get(self.config.model_type, None) is not None:
+                post_process_fn = TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING[self.config.model_type]
+                past_key_values = post_process_fn(past_key_values)
+            return past_key_values
+
+        elif peft_config.peft_type == PeftType.PREFIX_COLAB_TUNING:
+            prompt_tokens = prompt_tokens[:, : peft_config.num_virtual_tokens]
+            if peft_config.inference_mode:
+                past_key_values = prompt_encoder.embedding.weight.repeat(batch_size, 1, 1)
+            else:
+                past_key_values = prompt_encoder(prompt_tokens, task_ids)
+            if self.base_model_torch_dtype is not None:
+                past_key_values = past_key_values.to(self.base_model_torch_dtype)
 
             if hasattr(self.base_model.config, "num_key_value_heads"):
                 past_key_values = past_key_values.view(
@@ -560,16 +603,19 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                     peft_config.num_attention_heads,
                     peft_config.token_dim // peft_config.num_attention_heads,
                 )
-
-            #print(past_key_values.shape)
                 
             if peft_config.num_transformer_submodules == 2:
                 past_key_values = torch.cat([past_key_values, past_key_values], dim=2)
             past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(
                 peft_config.num_transformer_submodules * 2
             )
+
             if TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING.get(self.config.model_type, None) is not None:
                 post_process_fn = TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING[self.config.model_type]
+                past_key_values = post_process_fn(past_key_values)
+
+            elif TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING.get(self.config.model_type, None) is not None:
+                post_process_fn = TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING[self.config.model_type]
                 past_key_values = post_process_fn(past_key_values)
             return past_key_values
         else:
@@ -1423,6 +1469,7 @@ class PeftModelForCausalLM(PeftModel):
         task_ids=None,
         **kwargs,
     ):
+
         peft_config = self.active_peft_config
         if not peft_config.is_prompt_learning:
             if self.base_model.config.model_type == "mpt":
@@ -1478,6 +1525,11 @@ class PeftModelForCausalLM(PeftModel):
 
         if peft_config.peft_type == PeftType.PREFIX_TUNING:
             past_key_values = self.get_prompt(batch_size)
+            return self.base_model(
+                input_ids=input_ids, inputs_embeds=inputs_embeds, past_key_values=past_key_values, **kwargs
+            )
+        elif peft_config.peft_type == PeftType.PREFIX_COLAB_TUNING:
+            past_key_values = self.get_prompt(batch_size, task_ids=task_ids)
             return self.base_model(
                 input_ids=input_ids, inputs_embeds=inputs_embeds, past_key_values=past_key_values, **kwargs
             )
@@ -1556,6 +1608,9 @@ class PeftModelForCausalLM(PeftModel):
                 kwargs["token_type_ids"] = None
 
             if model_kwargs["past_key_values"] is None and peft_config.peft_type == PeftType.PREFIX_TUNING:
+                past_key_values = self.get_prompt(batch_size=model_kwargs["input_ids"].shape[0])
+                model_kwargs["past_key_values"] = past_key_values
+            elif model_kwargs["past_key_values"] is None and peft_config.peft_type == PeftType.PREFIX_COLAB_TUNING:
                 past_key_values = self.get_prompt(batch_size=model_kwargs["input_ids"].shape[0])
                 model_kwargs["past_key_values"] = past_key_values
             else:

@@ -44,6 +44,11 @@ TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING = {
     "gpt_bigcode": starcoder_model_postprocess_past_key_value,
 }
 
+TRANSFORMERS_MODELS_TO_PREFIX_COLAB_TUNING_POSTPROCESS_MAPPING = {
+    "bloom": bloom_model_postprocess_past_key_value,
+    "gpt_bigcode": starcoder_model_postprocess_past_key_value,
+}
+
 TRANSFORMERS_MODELS_TO_LNTUNING_TARGET_MODULES_MAPPING = {
     "llama": ["input_layernorm", "post_attention_layernorm", "norm"],
     "bloom": ["input_layernorm", "post_attention_layernorm", "ln_f"],
