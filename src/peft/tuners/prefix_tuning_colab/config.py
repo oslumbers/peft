@@ -36,15 +36,19 @@ class PrefixColabTuningConfig(PromptLearningConfig):
         default=False,
         metadata={"help": "Whether to project the prefix tokens"},
     )
-    num_task_tokens: int = field(
-        default=None,
-        metadata={"help": "The number of task specific tokens"},
-    )
-    num_tasks: int = field(
+    num_individual: int = field(
         default=1,
         metadata={"help": "The number of tasks"},
     )
-    num_shared_tokens: int = field(
+    num_tokens_individual: int = field(
+        default=None,
+        metadata={"help": "The number of task specific tokens"},
+    )
+    num_groups: int = field(
+        default=1,
+        metadata={"help": "The number of groups"},
+    )
+    num_tokens_group: int = field(
         default=None,
         metadata={"help": "The number of shared tokens"},
     )

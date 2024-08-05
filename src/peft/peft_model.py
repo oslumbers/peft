@@ -534,12 +534,13 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         """
         peft_config = self.active_peft_config
         prompt_encoder = self.prompt_encoder[self.active_adapter]
-        prompt_tokens = (
-            self.prompt_tokens[self.active_adapter]
-            .unsqueeze(0)
-            .expand(batch_size, -1)
-            .to(prompt_encoder.embedding.weight.device)
-        )
+        if peft_config.peft_type != PeftType.PREFIX_COLAB_TUNING:
+            prompt_tokens = (
+                self.prompt_tokens[self.active_adapter]
+                .unsqueeze(0)
+                .expand(batch_size, -1)
+                .to(prompt_encoder.embedding.weight.device)
+            )
         if peft_config.peft_type == PeftType.PREFIX_TUNING:
             prompt_tokens = prompt_tokens[:, : peft_config.num_virtual_tokens]
             if peft_config.inference_mode:
@@ -558,7 +559,7 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                     peft_config.token_dim // peft_config.num_attention_heads,
                 )
             else:
-                
+
                 past_key_values = past_key_values.view(
                     batch_size,
                     peft_config.num_virtual_tokens,
@@ -578,18 +579,20 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
             return past_key_values
 
         elif peft_config.peft_type == PeftType.PREFIX_COLAB_TUNING:
-            prompt_tokens = prompt_tokens[:, : peft_config.num_virtual_tokens]
+            
             if peft_config.inference_mode:
                 past_key_values = prompt_encoder.embedding.weight.repeat(batch_size, 1, 1)
             else:
-                past_key_values = prompt_encoder(prompt_tokens, task_ids)
+                past_key_values = prompt_encoder(task_ids)
             if self.base_model_torch_dtype is not None:
                 past_key_values = past_key_values.to(self.base_model_torch_dtype)
+
+            batch_size, num_vtokens, token_dim = past_key_values.shape
 
             if hasattr(self.base_model.config, "num_key_value_heads"):
                 past_key_values = past_key_values.view(
                     batch_size,
-                    peft_config.num_virtual_tokens,
+                    num_vtokens,
                     peft_config.num_layers * 2,
                     self.base_model.config.num_key_value_heads,
                     peft_config.token_dim // peft_config.num_attention_heads,
@@ -598,7 +601,7 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
                 
                 past_key_values = past_key_values.view(
                     batch_size,
-                    peft_config.num_virtual_tokens,
+                    num_vtokens,
                     peft_config.num_layers * 2,
                     peft_config.num_attention_heads,
                     peft_config.token_dim // peft_config.num_attention_heads,
@@ -609,7 +612,6 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
             past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(
                 peft_config.num_transformer_submodules * 2
             )
-
             if TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING.get(self.config.model_type, None) is not None:
                 post_process_fn = TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING[self.config.model_type]
                 past_key_values = post_process_fn(past_key_values)

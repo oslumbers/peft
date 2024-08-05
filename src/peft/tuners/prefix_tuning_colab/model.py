@@ -60,6 +60,15 @@ class PrefixColabEncoder(torch.nn.Module):
         num_layers = config.num_layers
         encoder_hidden_size = config.encoder_hidden_size
         num_virtual_tokens = config.num_virtual_tokens
+        self.num_individual = config.num_individual
+        self.num_groups = config.num_groups
+        self.num_tokens_individual = config.num_tokens_individual
+        self.num_tokens_group = config.num_tokens_group
+
+        # setup colab mechanism
+        self.W_q = torch.nn.Linear(token_dim, token_dim)
+        self.W_k = torch.nn.Linear(token_dim, token_dim)
+        self.W_v = torch.nn.Linear(token_dim, token_dim)
 
         if base_model_config is not None:
             if hasattr(base_model_config, "num_key_value_heads"):
@@ -70,24 +79,16 @@ class PrefixColabEncoder(torch.nn.Module):
             num_attn_heads = base_model_config.num_attention_heads
 
         if self.prefix_projection and not config.inference_mode:
+            self.individual_embedding = torch.nn.Embedding(self.num_individual * self.num_tokens_individual, token_dim)        
+            self.group_embedding = torch.nn.Embedding(self.num_groups * self.num_tokens_group, token_dim)     
             # Use a two-layer MLP to encode the prefix
-            if (num_key_value_heads is not None) and (num_key_value_heads != num_attn_heads):
-                self.embedding = torch.nn.Embedding(num_virtual_tokens, token_dim)
-
-                #self.shared_embedding = torch.nn.Embedding(config.num_shared_tokens, token_dim)
-                #self.tasks_embedding = torch.nn.Embedding((config.num_tasks)*config.num_task_tokens, token_dim)
-
-                #print(f'shape of shared embedding: {self.shared_embedding.weight.shape}')
-                #print(f'shape of tasks embedding: {self.tasks_embedding.weight.shape}')
-
+            if (num_key_value_heads is not None) and (num_key_value_heads != num_attn_heads):   
                 self.transform = torch.nn.Sequential(
                     torch.nn.Linear(token_dim, encoder_hidden_size),
                     torch.nn.Tanh(),
                     torch.nn.Linear(encoder_hidden_size, num_layers * 2 * num_key_value_heads * (token_dim // num_attn_heads)),
                 )
             else:
-                # Use a two-layer MLP to encode the prefix
-                self.embedding = torch.nn.Embedding(num_virtual_tokens, token_dim)
                 self.transform = torch.nn.Sequential(
                     torch.nn.Linear(token_dim, encoder_hidden_size),
                     torch.nn.Tanh(),
@@ -95,16 +96,54 @@ class PrefixColabEncoder(torch.nn.Module):
                 )
         else:
             if (num_key_value_heads is not None) and (num_key_value_heads != num_attn_heads):
-                self.embedding = torch.nn.Embedding(num_virtual_tokens, num_layers * 2 * num_key_value_heads * (token_dim // num_attn_heads))
+                self.individual_embedding = torch.nn.Embedding(self.num_individual * self.num_tokens_individual, num_layers * 2 * num_key_value_heads * (token_dim // num_attn_heads))
+                self.group_embedding = torch.nn.Embedding(self.num_groups * self.num_tokens_group, num_layers * 2 * num_key_value_heads * (token_dim // num_attn_heads))
             else:
-                self.embedding = torch.nn.Embedding(num_virtual_tokens, num_layers * 2 * token_dim)
+                self.individual_embedding = torch.nn.Embedding(self.num_individual * self.num_tokens_individual, num_layers * 2 * token_dim)
+                self.group_embedding = torch.nn.Embedding(self.num_groups * self.num_tokens_group, num_layers * 2 * token_dim)
 
-    def forward(self, prefix: torch.Tensor, task_ids: torch.Tensor):
-        print(f'prefix shape: {prefix.shape}')
-        print(f'task_ids shape: {task_ids.shape}')
+    def forward(self, task_ids: torch.Tensor):
+        individual_task_id = task_ids[:, 0].unsqueeze(dim=-1)
+        group_task_id = task_ids[:, 1].unsqueeze(dim=-1)
+        batch_size = individual_task_id.size(0)
+
+        individual_indices = individual_task_id * self.num_tokens_individual + torch.arange(self.num_tokens_individual, device=individual_task_id.device).unsqueeze(0)
+        group_indices = group_task_id * self.num_tokens_group + torch.arange(self.num_tokens_group, device=group_task_id.device).unsqueeze(0)
+
+        # get attention weights
+        all_individual_embeddings = self.individual_embedding.weight
+        all_individual_embeddings = all_individual_embeddings.unsqueeze(0)
+       # print(all_individual_embeddings.size())
+
+        self.Q = self.W_q(all_individual_embeddings)
+        self.K = self.W_k(all_individual_embeddings)
+        self.V = self.W_v(all_individual_embeddings)
+        #print(self.Q.size(), self.K.size(), self.V.size())
+
+        attention_output, attention_weights = self.attention()
+
+        #print(f'attention_output: {attention_output.size()}')
+        #print(f'attention_weights: {attention_weights.size()}')
+
         if self.prefix_projection:
-            prefix_tokens = self.embedding(prefix)
-            past_key_values = self.transform(prefix_tokens)
+            individual_tokens = self.individual_embedding(individual_indices).view(batch_size, self.num_tokens_individual, -1)
+            group_tokens = self.group_embedding(group_indices).view(batch_size, self.num_tokens_group, -1)
+            print(f'individual_tokens: {individual_tokens.size()}')
+            print(f'group_tokens: {group_tokens.size()}')
+            print(f'attention_output: {attention_output.size()}')
+            combined_tokens = torch.cat((individual_tokens, group_tokens, attention_output), dim=1)
+            print(f'combined_tokens: {combined_tokens.size()}')
+            past_key_values = self.transform(combined_tokens)
+            print(f'past_key_values: {past_key_values.size()}')
         else:
             past_key_values = self.embedding(prefix)
         return past_key_values
+
+    def attention(self):
+
+        d_k = self.Q.size(-1)
+        scores = torch.matmul(self.Q, self.K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=torch.float32))
+        attention_weights = torch.softmax(scores, dim=-1)
+        output = torch.matmul(attention_weights, self.V)
+
+        return output, attention_weights
